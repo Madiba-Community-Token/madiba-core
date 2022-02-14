@@ -1,7 +1,8 @@
 {
   "dependencies": {
     "@openzeppelin/contracts": "^4.4.2",
-    "@truffle/hdwallet-provider": "1.2.2"
+    "@truffle/hdwallet-provider": "1.2.2",
+    "@uniswap/v3-periphery": "^1.4.0"
   },
   "devDependencies": {
     "@openzeppelin/test-helpers": "^0.5.10",
