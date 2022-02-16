@@ -23,7 +23,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     uint256 private _newPaymentInterval = 2592000;
     uint256 private _whitelistHoldingCap = 1875000 * 10**8; // 10BNB
     uint256 private _dibaPerBNB = 187500; // current price as per the time of private sale
-    uint256 private _minimumPruchaseDiba = 3 * 10**8; // 3BNB
+    uint256 private _minimumPruchaseDiba = 3 * 10**18; // 3BNB
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -541,7 +541,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
             msg.value >= _minimumPruchaseDiba,
             "Minimum sale amount is 3BNB"
         );
-        uint256 _dibaAmount = msg.value * _dibaPerBNB;
+        uint256 _dibaAmount = msg.value.div(10**18).mul(_dibaPerBNB);
         whitelistReserveUsed = whitelistReserveUsed.add(_dibaAmount);
         HolderInfo memory holder = _whitelistInfo[_account];
         if (holder.total <= 0) {
@@ -585,5 +585,9 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
                 _mint(_whitelist[i], holder.monthlyCredit);
             }
         }
+    }
+
+    function holderInfo(address _holderAddress) public view returns(HolderInfo memory) {
+      return _whitelistInfo[_holderAddress];
     }
 }
