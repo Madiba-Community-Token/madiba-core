@@ -48,7 +48,7 @@ contract MadibaSwap is Ownable {
 
     constructor(IMadibaToken _diba, address router_) {
         diba = _diba;
-        numTokensSellToAddToLiquidity = 175e6 * 10**diba.decimals(); // 17%
+        numTokensSellToAddToLiquidity = (175e6 * 5) / 10**4 * 10**diba.decimals(); // 17%
         swapAndLiquifyEnabled = false;
 
         IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(router_);
@@ -58,8 +58,10 @@ contract MadibaSwap is Ownable {
 
         // set the rest of the contract variables
         uniswapV2Router = _uniswapV2Router;
-        updateOperator(owner(), true);
-        updateOperator(address(diba), true);
+        operators[owner()] = true;
+        operators[address(diba)] = true;
+        emit OperatorUpdated(owner(), true);
+        emit OperatorUpdated(address(diba), true);
     }
 
     function setDiba(IMadibaToken _newdiba) public onlyOperator {
@@ -96,6 +98,10 @@ contract MadibaSwap is Ownable {
         addLiquidity(otherHalf, newBalance);
 
         emit SwapAndLiquify(half, newBalance, otherHalf);
+    }
+
+    function setNumTokensSellToAddToLiquidity(uint256 swapNumber) public onlyOwner {
+        numTokensSellToAddToLiquidity = swapNumber * 10 ** diba.decimals();
     }
 
     function swapTokensForEth(uint256 tokenAmount) private {
@@ -136,7 +142,7 @@ contract MadibaSwap is Ownable {
         path[0] = address(diba);
         path[1] = uniswapV2Router.WETH();
 
-        diba.openApprove(address(diba), address(uniswapV2Router), amount);
+        // diba.openApprove(address(diba), address(uniswapV2Router), amount);
         TransferHelper.safeApprove(
             uniswapV2Router.WETH(),
             address(diba),
@@ -162,7 +168,7 @@ contract MadibaSwap is Ownable {
             address(diba),
             amount
         );
-        diba.openApprove(address(diba), address(uniswapV2Router), amount);
+        // diba.openApprove(address(diba), address(uniswapV2Router), amount);
 
         uniswapV2Router.swapExactTokensForETH(
             amount,

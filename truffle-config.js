@@ -41,7 +41,6 @@ module.exports = {
     bscscan: process.env.BSCSCAN_API_KEY
   },
 
-
   networks: {
     // Useful for testing. The `development` name is special - truffle uses it by default
     // if it's defined here and no other network is specified at the command line.
@@ -60,6 +59,7 @@ module.exports = {
       network_id: 97,
       confirmations: 10,
       timeoutBlocks: 200,
+      networkCheckTimeout: 999999,
       skipDryRun: true
     },
     // Useful for deploying to a public network.

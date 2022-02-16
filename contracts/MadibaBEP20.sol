@@ -25,8 +25,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     uint256 private _dibaPerBNB = 187500; // current price as per the time of private sale
     uint256 private _minimumPruchaseDiba = 3 * 10**8; // 3BNB
 
-    mapping(address => uint256) private _rOwned;
-    mapping(address => uint256) private _tOwned;
+    mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
     mapping(address => bool) private _isExcludedFromFee;
@@ -34,10 +33,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     mapping(address => bool) public operators;
     address[] private _excluded;
 
-    uint256 private constant MAX = ~uint256(0);
-    uint256 private _tTotal;
-    uint256 private _rTotal;
-    uint256 private _tFeeTotal;
+    uint256 private _totalSupply;
 
     uint256 public constant WHITELIST_RESERVE = 5e7 * 10**8; //50,000,000
     uint256 public constant STAKING_RESERVE = 4e8 * 10**8; //400,000,000
@@ -46,17 +42,10 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     uint256 public constant PRESALE_ALLOCATION = 25e7 * 10**8; //250,000,000
     uint256 public constant LIQUIDITY_ALLOCATION = 175e6 * 10**8; //200,000,000
     uint256 public constant TEAM_ALLOCATION = 3e7 * 10**8; //30,000,000
-    uint256 private _initialMint =
-        WHITELIST_RESERVE.add(PRESALE_ALLOCATION).add(LIQUIDITY_ALLOCATION).add(
-            TEAM_ALLOCATION
-        );
 
     uint256 public rewardReserveUsed;
     uint256 public whitelistReserveUsed;
     uint256 public stakingReserveUsed;
-
-    uint256 public _taxFee;
-    uint256 private _previousTaxFee = _taxFee;
 
     uint256 public _liquidityFee;
     uint256 private _previousLiquidityFee = _liquidityFee;
@@ -77,11 +66,9 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
 
     constructor(
         address devAddress_,
-        uint16 taxFeeBps_,
         uint16 liquidityFeeBps_,
         uint16 marketingFeeBps_
     ) {
-        require(taxFeeBps_ >= 0, "Invalid tax fee");
         require(liquidityFeeBps_ >= 0, "Invalid liquidity fee");
         require(marketingFeeBps_ >= 0, "Invalid marketing fee");
         if (devAddress_ == address(0)) {
@@ -91,17 +78,15 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
             );
         }
         require(
-            taxFeeBps_ + liquidityFeeBps_ + marketingFeeBps_ <= maxTxFeeBps,
+            liquidityFeeBps_ + marketingFeeBps_ <= maxTxFeeBps,
             "Total fee is over 45%"
         );
 
-        uint256 totalSupply_ = _initialMint;
-
-        _tTotal = totalSupply_;
-        _rTotal = (MAX - (MAX % _tTotal));
-
-        _taxFee = taxFeeBps_;
-        _previousTaxFee = _taxFee;
+        uint256 _initialSupply = WHITELIST_RESERVE
+            .add(PRESALE_ALLOCATION)
+            .add(LIQUIDITY_ALLOCATION)
+            .add(TEAM_ALLOCATION);
+        _mint(msg.sender, _initialSupply);
 
         _liquidityFee = liquidityFeeBps_;
         _previousLiquidityFee = _liquidityFee;
@@ -110,21 +95,18 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         _marketingFee = marketingFeeBps_;
         _previousMarketingFee = _marketingFee;
 
-        _rOwned[owner()] = _rTotal;
-
         // exclude owner and this contract from fee
         _isExcludedFromFee[owner()] = true;
         _isExcludedFromFee[address(this)] = true;
 
-        // updateOperator(owner(), true);
-
-        emit Transfer(address(0), owner(), _tTotal);
+        operators[owner()] = true;
+        emit OperatorUpdated(owner(), true);
 
         emit TokenCreated(owner(), address(this));
     }
 
     function totalSupply() public view override returns (uint256) {
-        return _tTotal;
+        return _totalSupply;
     }
 
     function getOwner() external view returns (address) {
@@ -136,8 +118,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     }
 
     function balanceOf(address account) public view override returns (uint256) {
-        if (_isExcluded[account]) return _tOwned[account];
-        return tokenFromReflection(_rOwned[account]);
+        return _balances[account];
     }
 
     function transfer(address recipient, uint256 amount)
@@ -202,7 +183,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         _approve(
             _msgSender(),
             spender,
-            _allowances[_msgSender()][spender].add(addedValue)
+            _allowances[_msgSender()][spender] + addedValue
         );
         return true;
     }
@@ -212,14 +193,15 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         virtual
         returns (bool)
     {
-        _approve(
-            _msgSender(),
-            spender,
-            _allowances[_msgSender()][spender].sub(
-                subtractedValue,
-                "ERC20: decreased allowance below zero"
-            )
+        uint256 currentAllowance = _allowances[_msgSender()][spender];
+        require(
+            currentAllowance >= subtractedValue,
+            "ERC20: decreased allowance below zero"
         );
+        unchecked {
+            _approve(_msgSender(), spender, currentAllowance - subtractedValue);
+        }
+
         return true;
     }
 
@@ -227,37 +209,34 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         _mint(_receiver, amount);
     }
 
+    function burn(address to, uint256 amount) external onlyOperator {
+        _burn(to, amount);
+    }
+
     function cap() public view virtual returns (uint256) {
         return _cap;
     }
 
-    function _mint(address receiver, uint256 amount) private {
+    function _mint(address account, uint256 amount) private {
         require(totalSupply() + amount <= cap(), "ERC20Capped: cap exceeded");
-        require(receiver != address(0), "ERC20: mint to the zero address");
-        uint256 _rate = _getRate();
-        _tTotal = _tTotal.add(amount);
-        _rTotal = _rTotal.add(amount.mul(_rate));
-        _rOwned[receiver] = _rOwned[receiver].add(amount.mul(_rate));
-        if (_isExcluded[receiver]) {
-            _tOwned[receiver] = _tOwned[receiver].add(amount);
-        }
-        emit Transfer(address(0), receiver, amount);
+        require(account != address(0), "ERC20: mint to the zero address");
+
+        _totalSupply += amount;
+        _balances[account] += amount;
+        emit Transfer(address(0), account, amount);
     }
 
     function _burn(address account, uint256 amount) private {
         require(account != address(0), "ERC20: burn from the zero address");
-        uint256 accountBalance = balanceOf(account);
+
+        uint256 accountBalance = _balances[account];
         require(accountBalance >= amount, "ERC20: burn amount exceeds balance");
-        address sender = account;
-        uint256 _rate = _getRate();
-        _tTotal = _tTotal.sub(amount);
-        // rTotal should be decreased as well
-        _rTotal = _rTotal.sub(amount.mul(_rate));
-        _rOwned[sender] = _rOwned[sender].sub(amount.mul(_rate));
-        if (_isExcluded[sender]) {
-            _tOwned[sender] = _tOwned[sender].sub(amount);
+        unchecked {
+            _balances[account] = accountBalance - amount;
         }
-        emit Transfer(sender, address(0), amount);
+        _totalSupply -= amount;
+
+        emit Transfer(account, address(0), amount);
     }
 
     function mintReward(address to) public onlyOperator {
@@ -277,97 +256,19 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         }
     }
 
-    function isExcludedFromReward(address account) public view returns (bool) {
-        return _isExcluded[account];
-    }
-
-    function totalFees() public view returns (uint256) {
-        return _tFeeTotal;
-    }
-
-    function deliver(uint256 tAmount) public {
-        address sender = _msgSender();
-        require(
-            !_isExcluded[sender],
-            "Excluded addresses cannot call this function"
-        );
-        (uint256 rAmount, , , , , , ) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _rTotal = _rTotal.sub(rAmount);
-        _tFeeTotal = _tFeeTotal.add(tAmount);
-    }
-
-    function reflectionFromToken(uint256 tAmount, bool deductTransferFee)
-        public
-        view
-        returns (uint256)
-    {
-        require(tAmount <= _tTotal, "Amount must be less than supply");
-        if (!deductTransferFee) {
-            (uint256 rAmount, , , , , , ) = _getValues(tAmount);
-            return rAmount;
-        } else {
-            (, uint256 rTransferAmount, , , , , ) = _getValues(tAmount);
-            return rTransferAmount;
-        }
-    }
-
-    function tokenFromReflection(uint256 rAmount)
-        public
-        view
-        returns (uint256)
-    {
-        require(
-            rAmount <= _rTotal,
-            "Amount must be less than total reflections"
-        );
-        uint256 currentRate = _getRate();
-        return rAmount.div(currentRate);
-    }
-
-    function excludeFromReward(address account) public onlyOperator {
-        require(!_isExcluded[account], "Account is already excluded");
-        if (_rOwned[account] > 0) {
-            _tOwned[account] = tokenFromReflection(_rOwned[account]);
-        }
-        _isExcluded[account] = true;
-        _excluded.push(account);
-    }
-
-    function includeInReward(address account) external onlyOperator {
-        require(_isExcluded[account], "Account is already excluded");
-        for (uint256 i = 0; i < _excluded.length; i++) {
-            if (_excluded[i] == account) {
-                _excluded[i] = _excluded[_excluded.length - 1];
-                _tOwned[account] = 0;
-                _isExcluded[account] = false;
-                _excluded.pop();
-                break;
-            }
-        }
-    }
-
     function _transferBothExcluded(
         address sender,
         address recipient,
         uint256 tAmount
     ) private {
         (
-            uint256 rAmount,
-            uint256 rTransferAmount,
-            uint256 rFee,
             uint256 tTransferAmount,
-            uint256 tFee,
             uint256 tLiquidity,
-            uint256 tMarketing
+            uint256 tMarketing,
+            uint256 tDebitAmount
         ) = _getValues(tAmount);
-        _tOwned[sender] = _tOwned[sender].sub(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _tOwned[recipient] = _tOwned[recipient].add(tTransferAmount);
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount);
-        _takeLiquidity(tLiquidity);
-        _takeMarketingFee(tMarketing);
-        _reflectFee(rFee, tFee);
+        _balances[sender] = _balances[sender].sub(tAmount);
+        _balances[recipient] = _balances[recipient].add(tAmount);
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
@@ -379,32 +280,19 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         _isExcludedFromFee[account] = false;
     }
 
-    function setTaxFeePercent(uint256 taxFeeBps) external onlyOperator {
-        _taxFee = taxFeeBps;
-        require(
-            _taxFee + _liquidityFee + _marketingFee <= maxTxFeeBps,
-            "Total fee is over 45%"
-        );
-    }
-
     function setLiquidityFeePercent(uint256 liquidityFeeBps)
         external
         onlyOperator
     {
         _liquidityFee = liquidityFeeBps;
         require(
-            _taxFee + _liquidityFee + _marketingFee <= maxTxFeeBps,
+            _liquidityFee + _marketingFee <= maxTxFeeBps,
             "Total fee is over 45%"
         );
     }
 
     //to recieve ETH from uniswapV2Router when swaping
     receive() external payable {}
-
-    function _reflectFee(uint256 rFee, uint256 tFee) private {
-        _rTotal = _rTotal.sub(rFee);
-        _tFeeTotal = _tFeeTotal.add(tFee);
-    }
 
     function _getValues(uint256 tAmount)
         private
@@ -413,34 +301,16 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
             uint256,
             uint256,
             uint256,
-            uint256,
-            uint256,
-            uint256,
             uint256
         )
     {
         (
             uint256 tTransferAmount,
-            uint256 tFee,
             uint256 tLiquidity,
-            uint256 tMarketing
+            uint256 tMarketing,
+            uint256 tDebitAmount
         ) = _getTValues(tAmount);
-        (uint256 rAmount, uint256 rTransferAmount, uint256 rFee) = _getRValues(
-            tAmount,
-            tFee,
-            tLiquidity,
-            tMarketing,
-            _getRate()
-        );
-        return (
-            rAmount,
-            rTransferAmount,
-            rFee,
-            tTransferAmount,
-            tFee,
-            tLiquidity,
-            tMarketing
-        );
+        return (tTransferAmount, tLiquidity, tMarketing, tDebitAmount);
     }
 
     function _getTValues(uint256 tAmount)
@@ -453,84 +323,23 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
             uint256
         )
     {
-        uint256 tFee = calculateTaxFee(tAmount);
         uint256 tLiquidity = calculateLiquidityFee(tAmount);
         uint256 tMarketingFee = calculateMarketingFee(tAmount);
-        uint256 tTransferAmount = tAmount.sub(tFee).sub(tLiquidity).sub(
-            tMarketingFee
-        );
-        return (tTransferAmount, tFee, tLiquidity, tMarketingFee);
-    }
-
-    function _getRValues(
-        uint256 tAmount,
-        uint256 tFee,
-        uint256 tLiquidity,
-        uint256 tMarketing,
-        uint256 currentRate
-    )
-        private
-        pure
-        returns (
-            uint256,
-            uint256,
-            uint256
-        )
-    {
-        uint256 rAmount = tAmount.mul(currentRate);
-        uint256 rFee = tFee.mul(currentRate);
-        uint256 rLiquidity = tLiquidity.mul(currentRate);
-        uint256 rMarketing = tMarketing.mul(currentRate);
-        uint256 rTransferAmount = rAmount.sub(rFee).sub(rLiquidity).sub(
-            rMarketing
-        );
-        return (rAmount, rTransferAmount, rFee);
-    }
-
-    function _getRate() private view returns (uint256) {
-        (uint256 rSupply, uint256 tSupply) = _getCurrentSupply();
-        return rSupply.div(tSupply);
-    }
-
-    function _getCurrentSupply() private view returns (uint256, uint256) {
-        uint256 rSupply = _rTotal;
-        uint256 tSupply = _tTotal;
-        for (uint256 i = 0; i < _excluded.length; i++) {
-            if (
-                _rOwned[_excluded[i]] > rSupply ||
-                _tOwned[_excluded[i]] > tSupply
-            ) return (_rTotal, _tTotal);
-            rSupply = rSupply.sub(_rOwned[_excluded[i]]);
-            tSupply = tSupply.sub(_tOwned[_excluded[i]]);
-        }
-        if (rSupply < _rTotal.div(_tTotal)) return (_rTotal, _tTotal);
-        return (rSupply, tSupply);
+        uint256 tTransferAmount = tAmount.sub(tLiquidity).sub(tMarketingFee);
+        uint256 tDebitAmount = tAmount.add(tLiquidity).add(tMarketingFee);
+        return (tTransferAmount, tLiquidity, tMarketingFee, tDebitAmount);
     }
 
     function _takeLiquidity(uint256 tLiquidity) private {
-        uint256 currentRate = _getRate();
-        uint256 rLiquidity = tLiquidity.mul(currentRate);
-        _rOwned[address(this)] = _rOwned[address(this)].add(rLiquidity);
-        if (_isExcluded[address(this)])
-            _tOwned[address(this)] = _tOwned[address(this)].add(tLiquidity);
+        _balances[address(this)] = _balances[address(this)].add(tLiquidity);
     }
 
     function _takeMarketingFee(uint256 tMarketing) private {
         if (tMarketing > 0) {
-            uint256 currentRate = _getRate();
-            uint256 rMarketing = tMarketing.mul(currentRate);
-            _rOwned[_marketingFeeReceiver] = _rOwned[_marketingFeeReceiver].add(
-                rMarketing
-            );
-            if (_isExcluded[_marketingFeeReceiver])
-                _tOwned[_marketingFeeReceiver] = _tOwned[_marketingFeeReceiver]
-                    .add(tMarketing);
+            _balances[_marketingFeeReceiver] = _balances[_marketingFeeReceiver]
+                .add(tMarketing);
             emit Transfer(_msgSender(), _marketingFeeReceiver, tMarketing);
         }
-    }
-
-    function calculateTaxFee(uint256 _amount) private view returns (uint256) {
-        return _amount.mul(_taxFee).div(10**4);
     }
 
     function calculateLiquidityFee(uint256 _amount)
@@ -551,19 +360,16 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     }
 
     function removeAllFee() private {
-        if (_taxFee == 0 && _liquidityFee == 0 && _marketingFee == 0) return;
+        if (_liquidityFee == 0 && _marketingFee == 0) return;
 
-        _previousTaxFee = _taxFee;
         _previousLiquidityFee = _liquidityFee;
         _previousMarketingFee = _marketingFee;
 
-        _taxFee = 0;
         _liquidityFee = 0;
         _marketingFee = 0;
     }
 
     function restoreAllFee() private {
-        _taxFee = _previousTaxFee;
         _liquidityFee = _previousLiquidityFee;
         _marketingFee = _previousMarketingFee;
     }
@@ -650,19 +456,15 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         uint256 tAmount
     ) private {
         (
-            uint256 rAmount,
-            uint256 rTransferAmount,
-            uint256 rFee,
             uint256 tTransferAmount,
-            uint256 tFee,
             uint256 tLiquidity,
-            uint256 tMarketing
+            uint256 tMarketing,
+            uint256 tDebitAmount
         ) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount);
+        _balances[sender] = _balances[sender].sub(tDebitAmount);
+        _balances[recipient] = _balances[recipient].add(tTransferAmount);
         _takeLiquidity(tLiquidity);
         _takeMarketingFee(tMarketing);
-        _reflectFee(rFee, tFee);
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
@@ -672,20 +474,15 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         uint256 tAmount
     ) private {
         (
-            uint256 rAmount,
-            uint256 rTransferAmount,
-            uint256 rFee,
             uint256 tTransferAmount,
-            uint256 tFee,
             uint256 tLiquidity,
-            uint256 tMarketing
+            uint256 tMarketing,
+            uint256 tDebitAmount
         ) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _tOwned[recipient] = _tOwned[recipient].add(tTransferAmount);
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount);
+        _balances[sender] = _balances[sender].sub(tDebitAmount);
+        _balances[recipient] = _balances[recipient].add(tTransferAmount);
         _takeLiquidity(tLiquidity);
         _takeMarketingFee(tMarketing);
-        _reflectFee(rFee, tFee);
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
@@ -695,20 +492,15 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         uint256 tAmount
     ) private {
         (
-            uint256 rAmount,
-            uint256 rTransferAmount,
-            uint256 rFee,
             uint256 tTransferAmount,
-            uint256 tFee,
             uint256 tLiquidity,
-            uint256 tMarketing
+            uint256 tMarketing,
+            uint256 tDebitAmount
         ) = _getValues(tAmount);
-        _tOwned[sender] = _tOwned[sender].sub(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount);
+        _balances[sender] = _balances[sender].sub(tAmount);
+        _balances[recipient] = _balances[recipient].add(tTransferAmount);
         _takeLiquidity(tLiquidity);
         _takeMarketingFee(tMarketing);
-        _reflectFee(rFee, tFee);
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
