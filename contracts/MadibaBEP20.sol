@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IMadibaSwap.sol";
 import "./extensions/BaseToken.sol";
 
@@ -21,8 +22,8 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     mapping(address => HolderInfo) private _whitelistInfo;
     address[] private _whitelist;
     uint256 private _newPaymentInterval = 2592000;
-    uint256 private _whitelistHoldingCap = 1875000 * 10**8; // 10BNB
-    uint256 private _dibaPerBNB = 187500; // current price as per the time of private sale
+    uint256 private _whitelistHoldingCap = 1875000 * 10**decimals(); // 10BNB
+    uint256 private _dibaPerBNB = 187500 * 10**decimals(); // current price as per the time of private sale
     uint256 private _minimumPruchaseDiba = 3 * 10**18; // 3BNB
 
     mapping(address => uint256) private _balances;
@@ -565,7 +566,7 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         holder.nextPaymentUntil = block.timestamp.add(_newPaymentInterval);
         _whitelistInfo[_account] = holder;
         _burn(owner(), _dibaAmount);
-        _transfer(owner(), _account, initialPayment);
+        _mint(_account, initialPayment);
     }
 
     function timelyWhitelistPaymentRelease() public onlyOwner {
