@@ -40,10 +40,10 @@ abstract contract BaseToken {
     }
 
     function name() public view returns (string memory) {
-        return  "Madiba2";
+        return  "Madiba3";
     }
 
     function symbol() public view returns (string memory) {
-        return "DIBA2";
+        return "DIBA3";
     }
 }

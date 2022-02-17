@@ -292,6 +292,17 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         );
     }
 
+    function setMarketingFeePercent(uint256 marketingFeeBps)
+        external
+        onlyOperator
+    {
+        _marketingFee = marketingFeeBps;
+        require(
+            _liquidityFee + _marketingFee <= maxTxFeeBps,
+            "Total fee is over 45%"
+        );
+    }
+
     //to recieve ETH from uniswapV2Router when swaping
     receive() external payable {}
 
