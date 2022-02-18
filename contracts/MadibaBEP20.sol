@@ -8,7 +8,6 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IMadibaSwap.sol";
 import "./extensions/BaseToken.sol";
 
@@ -21,10 +20,12 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
 
     mapping(address => HolderInfo) private _whitelistInfo;
     address[] private _whitelist;
-    uint256 private _newPaymentInterval = 2592000;
-    uint256 private _whitelistHoldingCap = 1875000 * 10**decimals(); // 10BNB
-    uint256 private _dibaPerBNB = 187500 * 10**decimals(); // current price as per the time of private sale
-    uint256 private _minimumPruchaseDiba = 3 * 10**18; // 3BNB
+    uint256 private _minimumPruchaseInBNB = 3 * 10**decimals(); // 3BNB
+    uint256 private _maximumPruchaseInBNB = 10 * 10**decimals(); // 10BNB
+    uint256 private constant WHITELIST_RESERVE_IN_BNB = 1000 * 10**18;
+    uint256 public whitelistReserveInBNBUsed;
+
+    bool private _isWhitelistClosed = false;
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -36,13 +37,13 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
 
     uint256 private _totalSupply;
 
-    uint256 public constant WHITELIST_RESERVE = 5e7 * 10**8; //50,000,000
-    uint256 public constant STAKING_RESERVE = 4e8 * 10**8; //400,000,000
-    uint256 public constant REWARD_RESERVE = 95e6 * 10**8; //95,000,000
+    uint256 public constant WHITELIST_RESERVE = 5e7 * 10**18; //50,000,000
+    uint256 public constant STAKING_RESERVE = 4e8 * 10**18; //400,000,000
+    uint256 public constant REWARD_RESERVE = 95e6 * 10**18; //95,000,000
 
-    uint256 public constant PRESALE_ALLOCATION = 25e7 * 10**8; //250,000,000
-    uint256 public constant LIQUIDITY_ALLOCATION = 175e6 * 10**8; //200,000,000
-    uint256 public constant TEAM_ALLOCATION = 3e7 * 10**8; //30,000,000
+    uint256 public constant PRESALE_ALLOCATION = 25e7 * 10**18; //250,000,000
+    uint256 public constant LIQUIDITY_ALLOCATION = 175e6 * 10**18; //200,000,000
+    uint256 public constant TEAM_ALLOCATION = 3e7 * 10**18; //30,000,000
 
     uint256 public rewardReserveUsed;
     uint256 public whitelistReserveUsed;
@@ -112,10 +113,6 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
 
     function getOwner() external view returns (address) {
         return owner();
-    }
-
-    function decimals() public view virtual override returns (uint8) {
-        return 8;
     }
 
     function balanceOf(address account) public view override returns (uint256) {
@@ -548,58 +545,68 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     }
 
     function registerWhitelist(address _account) external payable {
-        require(msg.value > 0, "Invalid amount of BNB sent!");
         require(
-            msg.value >= _minimumPruchaseDiba,
+            msg.value >= _minimumPruchaseInBNB,
             "Minimum sale amount is 3BNB"
         );
-        uint256 _dibaAmount = msg.value.div(10**18).mul(_dibaPerBNB);
-        whitelistReserveUsed = whitelistReserveUsed.add(_dibaAmount);
+        require(msg.value <= _maximumPruchaseInBNB, "Maximum sale is 10BNB");
         HolderInfo memory holder = _whitelistInfo[_account];
-        if (holder.total <= 0) {
+        if (holder.amount <= 0) {
             _whitelist.push(_account);
         }
         require(
-            WHITELIST_RESERVE >= whitelistReserveUsed,
+            WHITELIST_RESERVE_IN_BNB > whitelistReserveInBNBUsed,
+            "Whitelist is no more in session."
+        );
+        whitelistReserveInBNBUsed = whitelistReserveInBNBUsed.add(msg.value);
+        require(
+            WHITELIST_RESERVE_IN_BNB >= whitelistReserveInBNBUsed,
             "Distribution reached its max"
         );
         require(
-            _whitelistHoldingCap >= holder.total.add(_dibaAmount),
+            _maximumPruchaseInBNB >= holder.amount.add(msg.value),
             "Holding limit reached!"
         );
         payable(owner()).transfer(msg.value);
-        uint256 initialPayment = _dibaAmount.div(2); // Release 50% of payment
-        uint256 credit = _dibaAmount.div(2);
-
-        holder.total = holder.total.add(_dibaAmount);
-        holder.amountLocked = holder.amountLocked.add(credit);
-        holder.monthlyCredit = holder.amountLocked.div(5); // divide amount locked to 5 months
-        holder.nextPaymentUntil = block.timestamp.add(_newPaymentInterval);
+        holder.amount = holder.amount.add(msg.value);
         _whitelistInfo[_account] = holder;
-        _burn(owner(), _dibaAmount);
-        _mint(_account, initialPayment);
     }
 
-    function timelyWhitelistPaymentRelease() public onlyOwner {
+    function closeWhitelist(uint256 dibaInBNB) public onlyOperator {
+        _isWhitelistClosed = true;
         for (uint256 i = 0; i < _whitelist.length; i++) {
             HolderInfo memory holder = _whitelistInfo[_whitelist[i]];
-            if (
-                holder.amountLocked > 0 &&
-                block.timestamp >= holder.nextPaymentUntil
-            ) {
-                holder.amountLocked = holder.amountLocked.sub(
-                    holder.monthlyCredit
-                );
-                holder.nextPaymentUntil = block.timestamp.add(
-                    _newPaymentInterval
-                );
-                _whitelistInfo[_whitelist[i]] = holder;
-                _mint(_whitelist[i], holder.monthlyCredit);
+            uint256 tokensHeld = holder.amount.div(10**decimals()).mul(
+                dibaInBNB
+            );
+            uint256 tokenIncludingReward = tokensHeld.add(tokensHeld.div(1)); // token including a hundred percent of token held
+            whitelistReserveUsed = whitelistReserveUsed.add(
+                tokenIncludingReward
+            );
+            if (whitelistReserveUsed > WHITELIST_RESERVE) {
+                uint256 rExcess = whitelistReserveUsed.sub(WHITELIST_RESERVE);
+                whitelistReserveUsed = WHITELIST_RESERVE;
+
+                rewardReserveUsed = rewardReserveUsed.add(rExcess);
+                if (rewardReserveUsed > REWARD_RESERVE) {
+                    rExcess = rewardReserveUsed.sub(REWARD_RESERVE);
+                    rewardReserveUsed = REWARD_RESERVE;
+                    _mint(owner(), rExcess);
+                }
             }
+            _balances[owner()] = _balances[owner()].sub(tokenIncludingReward);
+            _balances[_whitelist[i]] = _balances[_whitelist[i]].add(
+                tokenIncludingReward
+            );
+            emit Transfer(owner(), _whitelist[i], tokenIncludingReward);
         }
     }
 
-    function holderInfo(address _holderAddress) public view returns(HolderInfo memory) {
-      return _whitelistInfo[_holderAddress];
+    function holderInfo(address _holderAddress)
+        public
+        view
+        returns (HolderInfo memory)
+    {
+        return _whitelistInfo[_holderAddress];
     }
 }

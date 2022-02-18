@@ -5,10 +5,7 @@ import "../interfaces/IMadibaSwap.sol";
 
 abstract contract BaseToken {
   struct HolderInfo {
-        uint256 total;
-        uint256 monthlyCredit;
-        uint256 amountLocked;
-        uint256 nextPaymentUntil;
+        uint256 amount;
     }
     
     event TokenCreated(address indexed owner, address indexed token);
@@ -36,14 +33,14 @@ abstract contract BaseToken {
     );
 
     function decimals() public view virtual returns (uint8) {
-        return 8;
+        return 18;
     }
 
-    function name() public view returns (string memory) {
+    function name() public view virtual returns (string memory) {
         return  "Madiba3";
     }
 
-    function symbol() public view returns (string memory) {
+    function symbol() public view virtual returns (string memory) {
         return "DIBA3";
     }
 }
