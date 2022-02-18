@@ -32,6 +32,11 @@ abstract contract BaseToken {
         IMadibaSwap indexed newAddress
     );
 
+    event WhitelistingClosed(
+        bool indexed previusState,
+        bool indexed currentState
+    );
+
     function decimals() public view virtual returns (uint8) {
         return 18;
     }

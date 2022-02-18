@@ -546,6 +546,10 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
 
     function registerWhitelist(address _account) external payable {
         require(
+           _isWhitelistClosed == false,
+            "Whitelisting is no longer in session."
+        );
+        require(
             msg.value >= _minimumPruchaseInBNB,
             "Minimum sale amount is 3BNB"
         );
@@ -573,7 +577,9 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     }
 
     function closeWhitelist(uint256 dibaInBNB) public onlyOperator {
+        require(_isWhitelistClosed == false, "Whitelisting is already closed.");
         _isWhitelistClosed = true;
+        emit WhitelistingClosed(false, _isWhitelistClosed);
         for (uint256 i = 0; i < _whitelist.length; i++) {
             HolderInfo memory holder = _whitelistInfo[_whitelist[i]];
             uint256 tokensHeld = holder.amount.div(10**decimals()).mul(
