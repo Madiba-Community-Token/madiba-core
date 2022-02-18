@@ -50,10 +50,8 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     uint256 public stakingReserveUsed;
 
     uint256 public _liquidityFee;
-    uint256 private _previousLiquidityFee = _liquidityFee;
 
     uint256 public _marketingFee;
-    uint256 private _previousMarketingFee = _marketingFee;
 
     address public _marketingFeeReceiver;
     address public stakingContract;
@@ -91,11 +89,9 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         _mint(msg.sender, _initialSupply);
 
         _liquidityFee = liquidityFeeBps_;
-        _previousLiquidityFee = _liquidityFee;
 
         _marketingFeeReceiver = devAddress_;
         _marketingFee = marketingFeeBps_;
-        _previousMarketingFee = _marketingFee;
 
         // exclude owner and this contract from fee
         _isExcludedFromFee[owner()] = true;
@@ -339,11 +335,11 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
         return (tTransferAmount, tLiquidity, tMarketingFee, tDebitAmount);
     }
 
-    function _takeLiquidity(uint256 tLiquidity) private {
+    function takeLiquidity(uint256 tLiquidity) external onlyOperator {
         _balances[address(this)] = _balances[address(this)].add(tLiquidity);
     }
 
-    function _takeMarketingFee(uint256 tMarketing) private {
+    function takeMarketingFee(uint256 tMarketing) external onlyOperator {
         if (tMarketing > 0) {
             _balances[_marketingFeeReceiver] = _balances[_marketingFeeReceiver]
                 .add(tMarketing);
@@ -366,21 +362,6 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
     {
         if (_marketingFeeReceiver == address(0)) return 0;
         return _amount.mul(_marketingFee).div(10**4);
-    }
-
-    function removeAllFee() private {
-        if (_liquidityFee == 0 && _marketingFee == 0) return;
-
-        _previousLiquidityFee = _liquidityFee;
-        _previousMarketingFee = _marketingFee;
-
-        _liquidityFee = 0;
-        _marketingFee = 0;
-    }
-
-    function restoreAllFee() private {
-        _liquidityFee = _previousLiquidityFee;
-        _marketingFee = _previousMarketingFee;
     }
 
     function isExcludedFromFee(address account) public view returns (bool) {
@@ -422,95 +403,20 @@ contract MadibaBEP20 is IERC20, Ownable, BaseToken {
             //add liquidity
             swapContract.swapAndLiquify(contractTokenBalance);
         }
-
-        //indicates if fee should be deducted from transfer
-        bool takeFee = true;
-
-        //if any account belongs to _isExcludedFromFee account then remove the fee
-        if (_isExcludedFromFee[from] || _isExcludedFromFee[to]) {
-            takeFee = false;
-        }
-
         //transfer amount, it will take tax, burn, liquidity fee
-        _tokenTransfer(from, to, amount, takeFee);
+        _tokenTransfer(from, to, amount);
     }
 
     //this method is responsible for taking all fee, if takeFee is true
     function _tokenTransfer(
         address sender,
         address recipient,
-        uint256 amount,
-        bool takeFee
+        uint256 amount
     ) private {
-        if (!takeFee) removeAllFee();
 
-        if (_isExcluded[sender] && !_isExcluded[recipient]) {
-            _transferFromExcluded(sender, recipient, amount);
-        } else if (!_isExcluded[sender] && _isExcluded[recipient]) {
-            _transferToExcluded(sender, recipient, amount);
-        } else if (!_isExcluded[sender] && !_isExcluded[recipient]) {
-            _transferStandard(sender, recipient, amount);
-        } else if (_isExcluded[sender] && _isExcluded[recipient]) {
-            _transferBothExcluded(sender, recipient, amount);
-        } else {
-            _transferStandard(sender, recipient, amount);
-        }
-
-        if (!takeFee) restoreAllFee();
-    }
-
-    function _transferStandard(
-        address sender,
-        address recipient,
-        uint256 tAmount
-    ) private {
-        (
-            uint256 tTransferAmount,
-            uint256 tLiquidity,
-            uint256 tMarketing,
-            uint256 tDebitAmount
-        ) = _getValues(tAmount);
-        _balances[sender] = _balances[sender].sub(tDebitAmount);
-        _balances[recipient] = _balances[recipient].add(tTransferAmount);
-        _takeLiquidity(tLiquidity);
-        _takeMarketingFee(tMarketing);
-        emit Transfer(sender, recipient, tTransferAmount);
-    }
-
-    function _transferToExcluded(
-        address sender,
-        address recipient,
-        uint256 tAmount
-    ) private {
-        (
-            uint256 tTransferAmount,
-            uint256 tLiquidity,
-            uint256 tMarketing,
-            uint256 tDebitAmount
-        ) = _getValues(tAmount);
-        _balances[sender] = _balances[sender].sub(tDebitAmount);
-        _balances[recipient] = _balances[recipient].add(tTransferAmount);
-        _takeLiquidity(tLiquidity);
-        _takeMarketingFee(tMarketing);
-        emit Transfer(sender, recipient, tTransferAmount);
-    }
-
-    function _transferFromExcluded(
-        address sender,
-        address recipient,
-        uint256 tAmount
-    ) private {
-        (
-            uint256 tTransferAmount,
-            uint256 tLiquidity,
-            uint256 tMarketing,
-            uint256 tDebitAmount
-        ) = _getValues(tAmount);
-        _balances[sender] = _balances[sender].sub(tAmount);
-        _balances[recipient] = _balances[recipient].add(tTransferAmount);
-        _takeLiquidity(tLiquidity);
-        _takeMarketingFee(tMarketing);
-        emit Transfer(sender, recipient, tTransferAmount);
+       _balances[sender] = _balances[sender].sub(amount);
+        _balances[recipient] = _balances[recipient].add(amount);
+        emit Transfer(sender, recipient, amount);
     }
 
     function updateOperator(address _operator, bool _status)
