@@ -42,10 +42,10 @@ abstract contract BaseToken {
     }
 
     function name() public view virtual returns (string memory) {
-        return  "Madiba3";
+        return  "Madiba";
     }
 
     function symbol() public view virtual returns (string memory) {
-        return "DIBA3";
+        return "DIBA";
     }
 }
